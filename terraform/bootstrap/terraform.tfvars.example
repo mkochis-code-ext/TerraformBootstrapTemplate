@@ -1,0 +1,11 @@
+# Workload name
+workload = "my-workload"
+
+# Azure region
+location = "eastus"
+
+# Tags
+tags = {
+  ManagedBy = "Terraform"
+  Project   = "My Project"
+}

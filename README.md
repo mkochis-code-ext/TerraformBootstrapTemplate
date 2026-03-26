@@ -103,8 +103,7 @@ All pipelines authenticate to Azure using the `ARM_CLIENT_ID`, `ARM_CLIENT_SECRE
 
 | Trigger               | Jobs run                                         |
 |-----------------------|--------------------------------------------------|
-| Pull request to `main`| **CI Plan** — fmt check, validate, plan, PR comment |
-| Push to `main` / `workflow_dispatch` | **CD Plan** → approval gate → **CD Apply** |
+| `workflow_dispatch` (manual only) | **CD Plan** → approval gate → **CD Apply** |
 
 The approval gate is enforced by the **`prereq-apply`** GitHub environment (configure required reviewers in *Settings → Environments*).
 

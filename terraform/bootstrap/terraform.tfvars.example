@@ -1,8 +1,15 @@
-# Workload name
-workload = "my-workload"
+# Resource group containing the storage accounts
+resource_group_name = "rg-bootstrap-myworkload"
 
 # Azure region
 location = "eastus"
+
+# Storage account names (must each be globally unique, 3–24 lowercase alphanumeric characters).
+# Add or remove names independently — for_each ensures only the changed account is affected.
+storage_account_names = [
+  "stbootstrapmyworkload1",
+  "stbootstrapmyworkload2",
+]
 
 # Tags
 tags = {

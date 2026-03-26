@@ -1,3 +1,13 @@
+variable "project_name" {
+  description = "Short, lowercase alphanumeric project identifier (max 16 characters). Used to build the prereq storage account name: stpreq<project_name>."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{1,16}$", var.project_name))
+    error_message = "project_name must be 1–16 lowercase alphanumeric characters with no spaces or special characters."
+  }
+}
+
 variable "create_resource_group" {
   description = "Set to true to create a new resource group for the storage account, false to use an existing one"
   type        = bool
@@ -9,15 +19,9 @@ variable "resource_group_name" {
   type        = string
 }
 
-variable "storage_account_names" {
-  description = "Set of storage account names to create for Terraform remote state. Each name must be globally unique and 3-24 lowercase alphanumeric characters. Using a set ensures for_each can track each account independently."
-  type        = set(string)
-}
-
 variable "location" {
   description = "Azure region for the resources"
   type        = string
-  default     = "eastus"
 }
 
 variable "tags" {

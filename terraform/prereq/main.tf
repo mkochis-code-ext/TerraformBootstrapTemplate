@@ -13,6 +13,12 @@ provider "azurerm" {
   features {}
 }
 
+locals {
+  # Static storage account name: "stpreq" prefix + project name.
+  # Must be globally unique, 3–24 lowercase alphanumeric characters.
+  storage_account_name = "stpreq${var.project_name}"
+}
+
 # Optionally create a resource group for the storage account
 module "resource_group" {
   source = "../modules/azurerm/resource_group"
@@ -23,17 +29,16 @@ module "resource_group" {
   tags     = var.tags
 }
 
-# Deploy one storage account per name in var.storage_account_names.
-# for_each ensures each storage account is tracked independently — removing a name
-# from the set only destroys that specific storage account and its tfstate container.
+# Deploy the single storage account used for Terraform remote state.
+# The name is derived from project_name so it is stable and predictable.
 module "storage_account" {
-  source   = "../modules/azurerm/storage_account"
-  for_each = var.storage_account_names
+  source = "../modules/azurerm/storage_account"
 
-  name                = each.key
+  name                = local.storage_account_name
   resource_group_name = var.resource_group_name
   location            = var.location
   tags                = var.tags
 
   depends_on = [module.resource_group]
 }
+

@@ -1,0 +1,177 @@
+name: Prereq CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/prereq/**'
+      - '.github/workflows/prereq.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/prereq/**'
+      - '.github/workflows/prereq.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  TF_VERSION: '1.6.0'
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  # CI – runs on pull requests: fmt check, validate, and plan with PR comment
+  terraform-plan-ci:
+    name: 'CI - Terraform Plan'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: ./terraform/prereq
+    env:
+      TF_VAR_project_name: ${{ secrets.PREREQ_PROJECT_NAME }}
+      TF_VAR_resource_group_name: ${{ secrets.PREREQ_RESOURCE_GROUP_NAME }}
+      TF_VAR_location: ${{ secrets.PREREQ_LOCATION }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -input=false
+        continue-on-error: true
+
+      - name: Comment PR with Plan
+        uses: actions/github-script@v7
+        env:
+          PLAN: "${{ steps.plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style \`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization \`${{ steps.init.outcome }}\`
+            #### Terraform Validation \`${{ steps.validate.outcome }}\`
+            #### Terraform Plan \`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>
+
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # CD Plan – runs on push to main or workflow_dispatch: plan and save artifact
+  terraform-plan-cd:
+    name: 'CD - Terraform Plan'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    defaults:
+      run:
+        working-directory: ./terraform/prereq
+    env:
+      TF_VAR_project_name: ${{ secrets.PREREQ_PROJECT_NAME }}
+      TF_VAR_resource_group_name: ${{ secrets.PREREQ_RESOURCE_GROUP_NAME }}
+      TF_VAR_location: ${{ secrets.PREREQ_LOCATION }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -no-color -input=false -out=tfplan
+
+      - name: Upload Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: prereq-tfplan
+          path: terraform/prereq/tfplan
+          retention-days: 1
+
+  # CD Apply – waits for approval via the prereq-apply GitHub environment, then applies
+  terraform-apply-cd:
+    name: 'CD - Terraform Apply'
+    runs-on: ubuntu-latest
+    needs: terraform-plan-cd
+    environment:
+      name: prereq-apply
+    defaults:
+      run:
+        working-directory: ./terraform/prereq
+    env:
+      TF_VAR_project_name: ${{ secrets.PREREQ_PROJECT_NAME }}
+      TF_VAR_resource_group_name: ${{ secrets.PREREQ_RESOURCE_GROUP_NAME }}
+      TF_VAR_location: ${{ secrets.PREREQ_LOCATION }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Download Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: prereq-tfplan
+          path: terraform/prereq
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false tfplan
+
+      - name: Terraform Output
+        id: output
+        run: terraform output -json

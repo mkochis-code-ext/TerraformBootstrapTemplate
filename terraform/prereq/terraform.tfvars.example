@@ -1,0 +1,19 @@
+# Short project identifier used to build the storage account name.
+# The resulting storage account name will be: stpreq<project_name>
+# Must be 1–16 lowercase alphanumeric characters.
+project_name = "myproject"
+
+# Whether to create a new resource group or use an existing one
+create_resource_group = true
+
+# Resource group name for the Terraform state storage account
+resource_group_name = "rg-tfstate-myproject"
+
+# Azure region
+location = "eastus"
+
+# Tags
+tags = {
+  ManagedBy = "Terraform"
+  Purpose   = "TerraformState"
+}

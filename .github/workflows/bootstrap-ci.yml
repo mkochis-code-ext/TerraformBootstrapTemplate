@@ -1,0 +1,108 @@
+name: Bootstrap CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/bootstrap/**'
+      - '.github/workflows/bootstrap-ci.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+env:
+  TF_VERSION: '1.6.0'
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  terraform-plan:
+    name: 'CI - Terraform Plan'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform/bootstrap
+    env:
+      TF_VAR_location: ${{ secrets.BOOTSTRAP_LOCATION }}
+      TF_VAR_resource_group_name: ${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}
+      TF_VAR_storage_account_names: ${{ secrets.BOOTSTRAP_STORAGE_ACCOUNT_NAMES }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Setup Backend Config
+        run: |
+          cat > backend.tf <<EOF
+          terraform {
+            backend "azurerm" {
+              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+              container_name       = "tfstate"
+              key                  = "bootstrap.terraform.tfstate"
+              resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: terraform init
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color -input=false
+        continue-on-error: true
+
+      - name: Comment PR with Plan
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN: "${{ steps.plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style \`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization \`${{ steps.init.outcome }}\`
+            #### Terraform Validation \`${{ steps.validate.outcome }}\`
+            #### Terraform Plan \`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>
+
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Plan Status
+        if: steps.plan.outcome == 'failure'
+        run: exit 1

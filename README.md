@@ -50,10 +50,11 @@ The `prereq` folder contains a standalone Terraform configuration that deploys t
    ```
 
    This will create:
-   - (Optionally) a Resource Group for the storage account
-   - A Storage Account with a blob container named `tfstate`
+   - (Optionally) a Resource Group for the storage accounts
+   - One Storage Account per name in `storage_account_names`, each with a blob container named `tfstate`
+   - Each storage account is tracked independently via `for_each`, so adding or removing a name only affects that specific account
 
-4. Note the output values (`storage_account_name`, `resource_group_name`) for the next step.
+4. Note the output values (`storage_account_names`, `resource_group_name`) for the next step.
 
 ### Step 2: Configure the Bootstrap Entry Point (`bootstrap`)
 

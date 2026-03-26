@@ -1,11 +1,15 @@
 # Whether to create a new resource group or use an existing one
 create_resource_group = true
 
-# Resource group name for the Terraform state storage account
+# Resource group name for the Terraform state storage accounts
 resource_group_name = "rg-tfstate"
 
-# Storage account name (must be globally unique, 3-24 lowercase alphanumeric characters)
-storage_account_name = "stterraformstate"
+# Storage account names (must each be globally unique, 3-24 lowercase alphanumeric characters).
+# Add or remove names independently — for_each ensures only the changed account is affected.
+storage_account_names = [
+  "stterraformstate1",
+  "stterraformstate2",
+]
 
 # Azure region
 location = "eastus"

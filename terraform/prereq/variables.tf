@@ -9,9 +9,9 @@ variable "resource_group_name" {
   type        = string
 }
 
-variable "storage_account_name" {
-  description = "Name of the storage account for Terraform remote state (must be globally unique, 3-24 lowercase alphanumeric characters)"
-  type        = string
+variable "storage_account_names" {
+  description = "Set of storage account names to create for Terraform remote state. Each name must be globally unique and 3-24 lowercase alphanumeric characters. Using a set ensures for_each can track each account independently."
+  type        = set(string)
 }
 
 variable "location" {

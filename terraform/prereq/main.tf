@@ -23,11 +23,14 @@ module "resource_group" {
   tags     = var.tags
 }
 
-# Deploy the storage account used for Terraform remote state
+# Deploy one storage account per name in var.storage_account_names.
+# for_each ensures each storage account is tracked independently — removing a name
+# from the set only destroys that specific storage account and its tfstate container.
 module "storage_account" {
-  source = "../modules/azurerm/storage_account"
+  source   = "../modules/azurerm/storage_account"
+  for_each = var.storage_account_names
 
-  name                = var.storage_account_name
+  name                = each.key
   resource_group_name = var.resource_group_name
   location            = var.location
   tags                = var.tags

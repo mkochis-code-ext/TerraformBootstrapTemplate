@@ -82,7 +82,7 @@ jobs:
             --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
             --ip-address "$RUNNER_IP" 2>/dev/null || true
           echo "Waiting for firewall rule to propagate..."
-          sleep 30
+          sleep 360
 
       # ── 3. Install Terraform ──
       - name: Setup Terraform

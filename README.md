@@ -119,8 +119,44 @@ The infrastructure uses **two separate VNets** to isolate bootstrap state from p
 ### Prerequisites
 
 - An Azure subscription
-- A service principal with Contributor access to the subscription (or target resource group)
+- A service principal with **Owner** access to the subscription (temporary — removed after setup)
 - A GitHub repository with the following secrets configured
+
+### Step 0: Create and Configure the Service Principal
+
+The bootstrap setup workflow needs to create resources **and** assign RBAC roles (e.g. `Storage Blob Data Contributor` on storage accounts). Azure's `Contributor` role can create resources but cannot create role assignments — that requires `Owner` or `User Access Administrator`.
+
+> **Security note:** Owner grants full control including RBAC management. This is only needed for the initial bootstrap run. After the setup workflow completes successfully, downgrade the SP to `Contributor` to follow the principle of least privilege.
+
+**Create the service principal with Owner on the subscription:**
+
+```bash
+# Create the SP and assign Owner (scoped to subscription)
+az ad sp create-for-rbac \
+  --name "sp-terraform-bootstrap" \
+  --role "Owner" \
+  --scopes "/subscriptions/<SUBSCRIPTION_ID>"
+```
+
+Save the `appId`, `password`, and `tenant` from the output — these map to `ARM_CLIENT_ID`, `ARM_CLIENT_SECRET`, and `ARM_TENANT_ID`.
+
+**After the bootstrap setup workflow succeeds, downgrade to Contributor:**
+
+```bash
+# Find and remove the Owner assignment
+az role assignment delete \
+  --assignee "<ARM_CLIENT_ID>" \
+  --role "Owner" \
+  --scope "/subscriptions/<SUBSCRIPTION_ID>"
+
+# Assign Contributor instead
+az role assignment create \
+  --assignee "<ARM_CLIENT_ID>" \
+  --role "Contributor" \
+  --scope "/subscriptions/<SUBSCRIPTION_ID>"
+```
+
+For tighter scoping, you can assign Owner only on the target resource group instead of the entire subscription. However, the resource group must exist first (the workflow creates it), so subscription-scoped is simpler for the initial run.
 
 ### Step 1: Configure GitHub Secrets
 
@@ -152,7 +188,25 @@ Create the following environment in **Settings → Environments**:
    - Run `terraform apply` to create the remaining infrastructure (VNet, subnet, DNS zones, project storage accounts)
 3. Verify the run succeeds with no errors
 
-### Step 4: Normal Development Workflow
+### Step 4: Downgrade Service Principal Permissions
+
+After the bootstrap setup succeeds, remove Owner and assign Contributor:
+
+```bash
+az role assignment delete \
+  --assignee "<ARM_CLIENT_ID>" \
+  --role "Owner" \
+  --scope "/subscriptions/<SUBSCRIPTION_ID>"
+
+az role assignment create \
+  --assignee "<ARM_CLIENT_ID>" \
+  --role "Contributor" \
+  --scope "/subscriptions/<SUBSCRIPTION_ID>"
+```
+
+The CI/CD pipelines only need `Contributor` for day-to-day operations.
+
+### Step 5: Normal Development Workflow
 
 From this point forward, all changes go through the standard CI/CD pipelines:
 

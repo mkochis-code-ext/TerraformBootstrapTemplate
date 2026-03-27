@@ -69,11 +69,21 @@ jobs:
 
           echo "=== Assigning Storage Blob Data Contributor to service principal ==="
           SA_ID=$(az storage account show --name "$SA_NAME" --resource-group "$RG_NAME" --query id -o tsv)
-          az role assignment create \
+          if ! az role assignment create \
             --assignee "${{ secrets.ARM_CLIENT_ID }}" \
             --role "Storage Blob Data Contributor" \
             --scope "$SA_ID" \
-            --only-show-errors || echo "Role assignment may already exist."
+            --only-show-errors 2>&1; then
+            echo ""
+            echo "::error::Failed to assign Storage Blob Data Contributor. The service principal likely does not have permission to create role assignments."
+            echo "::error::The service principal requires the Owner role (or Contributor + User Access Administrator) on the subscription or resource group."
+            echo "::error::Run the following command to grant Owner, then re-run this workflow:"
+            echo "::error::  az role assignment create --assignee \"${{ secrets.ARM_CLIENT_ID }}\" --role \"Owner\" --scope \"/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}\""
+            echo "::error::After this workflow succeeds, downgrade to Contributor:"
+            echo "::error::  az role assignment delete --assignee \"${{ secrets.ARM_CLIENT_ID }}\" --role \"Owner\" --scope \"/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}\""
+            echo "::error::  az role assignment create --assignee \"${{ secrets.ARM_CLIENT_ID }}\" --role \"Contributor\" --scope \"/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}\""
+            exit 1
+          fi
 
           echo "=== Verifying role assignment ==="
           ROLE_CHECK=$(az role assignment list \
@@ -177,7 +187,16 @@ jobs:
         id: output
         run: terraform output -json
 
-      # ── 7. Remove runner IP from storage firewall ──
+      # ── 7. Post-setup reminder ──
+      - name: Remind to downgrade service principal
+        run: |
+          echo "::warning::Bootstrap setup completed successfully. You should now downgrade the service principal from Owner to Contributor."
+          echo ""
+          echo "Run the following commands:"
+          echo "  az role assignment delete --assignee \"${{ secrets.ARM_CLIENT_ID }}\" --role \"Owner\" --scope \"/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}\""
+          echo "  az role assignment create --assignee \"${{ secrets.ARM_CLIENT_ID }}\" --role \"Contributor\" --scope \"/subscriptions/${{ secrets.ARM_SUBSCRIPTION_ID }}\""
+
+      # ── 8. Remove runner IP from storage firewall ──
       - name: Remove runner access from state storage
         if: always()
         run: |

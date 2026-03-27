@@ -30,10 +30,28 @@ jobs:
       TF_VAR_location: ${{ secrets.BOOTSTRAP_LOCATION }}
       TF_VAR_resource_group_name: ${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}
       TF_VAR_storage_account_names: ${{ secrets.BOOTSTRAP_STORAGE_ACCOUNT_NAMES }}
+      TF_VAR_state_storage_account_name: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}'
+
+      - name: Allow runner access to state storage
+        run: |
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+          echo "RUNNER_IP=$RUNNER_IP" >> $GITHUB_ENV
+          echo "Adding runner IP $RUNNER_IP to storage firewall..."
+          az storage account network-rule add \
+            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
+            --ip-address "$RUNNER_IP" 2>/dev/null || true
+          echo "Waiting for firewall rule to propagate..."
+          sleep 30
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -48,7 +66,7 @@ jobs:
               storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
               container_name       = "tfstate"
               key                  = "bootstrap.terraform.tfstate"
-              resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+              resource_group_name  = "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}"
               use_azuread_auth     = true
             }
           }
@@ -67,6 +85,14 @@ jobs:
           path: terraform/bootstrap/tfplan
           retention-days: 1
 
+      - name: Remove runner access from state storage
+        if: always()
+        run: |
+          az storage account network-rule remove \
+            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
+            --ip-address "$RUNNER_IP" 2>/dev/null || true
+
   terraform-apply:
     name: 'CD - Terraform Apply'
     runs-on: ubuntu-latest
@@ -80,10 +106,28 @@ jobs:
       TF_VAR_location: ${{ secrets.BOOTSTRAP_LOCATION }}
       TF_VAR_resource_group_name: ${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}
       TF_VAR_storage_account_names: ${{ secrets.BOOTSTRAP_STORAGE_ACCOUNT_NAMES }}
+      TF_VAR_state_storage_account_name: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}'
+
+      - name: Allow runner access to state storage
+        run: |
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+          echo "RUNNER_IP=$RUNNER_IP" >> $GITHUB_ENV
+          echo "Adding runner IP $RUNNER_IP to storage firewall..."
+          az storage account network-rule add \
+            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
+            --ip-address "$RUNNER_IP" 2>/dev/null || true
+          echo "Waiting for firewall rule to propagate..."
+          sleep 30
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -98,7 +142,7 @@ jobs:
               storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
               container_name       = "tfstate"
               key                  = "bootstrap.terraform.tfstate"
-              resource_group_name  = "${{ secrets.TF_STATE_RESOURCE_GROUP }}"
+              resource_group_name  = "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}"
               use_azuread_auth     = true
             }
           }
@@ -119,3 +163,11 @@ jobs:
       - name: Terraform Output
         id: output
         run: terraform output -json
+
+      - name: Remove runner access from state storage
+        if: always()
+        run: |
+          az storage account network-rule remove \
+            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
+            --ip-address "$RUNNER_IP" 2>/dev/null || true

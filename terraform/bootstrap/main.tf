@@ -7,13 +7,116 @@ terraform {
     }
   }
 
-  # Backend is configured at init time via -backend-config flags or a generated backend.tf.
+  # Backend is configured via a generated backend.tf file.
   # See the CI/CD workflows for how backend values are injected from secrets.
-  backend "azurerm" {}
+  # Run bootstrap-setup.yml first to create the state storage account.
 }
 
 provider "azurerm" {
   features {}
+}
+
+module "resource_group" {
+  source = "../modules/azurerm/resource_group"
+
+  name     = var.resource_group_name
+  location = var.location
+  tags     = var.tags
+}
+
+# State storage account for Terraform remote state. Network-restricted to the VNet.
+# Created by bootstrap-setup.yml via Azure CLI, then imported into state on the first run.
+# CI/CD runners temporarily add their IP to ip_rules (managed outside Terraform).
+resource "azurerm_storage_account" "state" {
+  name                          = var.state_storage_account_name
+  resource_group_name           = var.resource_group_name
+  location                      = var.location
+  account_tier                  = "Standard"
+  account_replication_type      = "LRS"
+  min_tls_version               = "TLS1_2"
+  public_network_access_enabled = true
+  tags                          = var.tags
+
+  network_rules {
+    default_action             = "Deny"
+    virtual_network_subnet_ids = [module.subnet.id]
+    bypass                     = ["AzureServices"]
+  }
+
+  # ip_rules are managed by CI/CD pipelines (runner IP allow/remove).
+  # Terraform must not revert dynamically added runner IPs.
+  lifecycle {
+    ignore_changes = [network_rules[0].ip_rules]
+  }
+
+  depends_on = [module.resource_group, module.subnet]
+}
+
+resource "azurerm_private_endpoint" "state_blob" {
+  name                = "pe-${var.state_storage_account_name}-blob"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  subnet_id           = module.subnet.id
+  tags                = var.tags
+
+  private_service_connection {
+    name                           = "psc-${var.state_storage_account_name}-blob"
+    private_connection_resource_id = azurerm_storage_account.state.id
+    subresource_names              = ["blob"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "default"
+    private_dns_zone_ids = [module.private_dns_zone_blob.id]
+  }
+}
+
+resource "azurerm_storage_container" "tfstate" {
+  name                  = "tfstate"
+  storage_account_name  = azurerm_storage_account.state.name
+  container_access_type = "private"
+}
+
+module "virtual_network" {
+  source = "../modules/azurerm/virtual_network"
+
+  name                = var.vnet_name
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  address_space       = var.vnet_address_space
+  tags                = var.tags
+
+  depends_on = [module.resource_group]
+}
+
+module "subnet" {
+  source = "../modules/azurerm/subnet"
+
+  name                 = var.subnet_name
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = module.virtual_network.name
+  address_prefixes     = var.subnet_address_prefixes
+  service_endpoints    = ["Microsoft.Storage"]
+}
+
+module "private_dns_zone_blob" {
+  source = "../modules/azurerm/private_dns_zone"
+
+  name                = "privatelink.blob.core.windows.net"
+  resource_group_name = var.resource_group_name
+  tags                = var.tags
+
+  depends_on = [module.resource_group]
+}
+
+module "private_dns_zone_vnet_link_blob" {
+  source = "../modules/azurerm/private_dns_zone_virtual_network_link"
+
+  name                  = "${var.vnet_name}-blob-link"
+  resource_group_name   = var.resource_group_name
+  private_dns_zone_name = module.private_dns_zone_blob.name
+  virtual_network_id    = module.virtual_network.id
 }
 
 # Deploy one storage account per name in var.storage_account_names.
@@ -23,9 +126,12 @@ module "storage_account" {
   source   = "../modules/azurerm/storage_account"
   for_each = var.storage_account_names
 
-  name                = each.key
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  tags                = var.tags
+  name                       = each.key
+  resource_group_name        = var.resource_group_name
+  location                   = var.location
+  subnet_ids                 = [module.subnet.id]
+  private_endpoint_subnet_id = module.subnet.id
+  private_dns_zone_blob_id   = module.private_dns_zone_blob.id
+  tags                       = var.tags
 }
 

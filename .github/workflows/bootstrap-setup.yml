@@ -1,0 +1,161 @@
+name: Bootstrap Setup
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: '1.6.0'
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+
+jobs:
+  bootstrap:
+    name: 'Bootstrap State & Apply'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform/bootstrap
+    env:
+      TF_VAR_location: ${{ secrets.BOOTSTRAP_LOCATION }}
+      TF_VAR_resource_group_name: ${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}
+      TF_VAR_storage_account_names: ${{ secrets.BOOTSTRAP_STORAGE_ACCOUNT_NAMES }}
+      TF_VAR_state_storage_account_name: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # ── 1. Create the state backend resources via Azure CLI (idempotent) ──
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}'
+
+      - name: Create backend resources (idempotent)
+        run: |
+          RG_NAME="${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}"
+          SA_NAME="${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+          LOCATION="${{ secrets.BOOTSTRAP_LOCATION }}"
+
+          echo "=== Ensuring resource group exists ==="
+          az group create \
+            --name "$RG_NAME" \
+            --location "$LOCATION" \
+            --tags ManagedBy=Terraform
+
+          echo "=== Ensuring storage account exists ==="
+          az storage account create \
+            --name "$SA_NAME" \
+            --resource-group "$RG_NAME" \
+            --location "$LOCATION" \
+            --sku Standard_LRS \
+            --min-tls-version TLS1_2 \
+            --tags ManagedBy=Terraform
+
+          echo "=== Ensuring blob container exists ==="
+          az storage container create \
+            --name "tfstate" \
+            --account-name "$SA_NAME" \
+            --auth-mode login
+
+      # ── 2. Allow the runner through the storage firewall ──
+      - name: Allow runner access to state storage
+        run: |
+          RUNNER_IP=$(curl -s https://api.ipify.org)
+          echo "RUNNER_IP=$RUNNER_IP" >> $GITHUB_ENV
+          echo "Adding runner IP $RUNNER_IP to storage firewall..."
+          az storage account network-rule add \
+            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
+            --ip-address "$RUNNER_IP" 2>/dev/null || true
+          echo "Waiting for firewall rule to propagate..."
+          sleep 30
+
+      # ── 3. Install Terraform ──
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # ── 4. Configure backend and initialise ──
+      - name: Setup Backend Config
+        run: |
+          cat > backend.tf <<EOF
+          terraform {
+            backend "azurerm" {
+              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+              container_name       = "tfstate"
+              key                  = "bootstrap.terraform.tfstate"
+              resource_group_name  = "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}"
+              use_azuread_auth     = true
+            }
+          }
+          EOF
+
+      - name: Terraform Init
+        run: terraform init
+
+      # ── 5. Import resources that were created outside Terraform ──
+      #    Uses `terraform state list` to detect resources already in state
+      #    so subsequent runs are safe.
+      - name: Terraform Import (first run only)
+        run: |
+          SUB_ID="${{ secrets.ARM_SUBSCRIPTION_ID }}"
+          RG_NAME="${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}"
+          SA_NAME="${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
+          EXISTING=$(terraform state list 2>/dev/null || true)
+
+          # ── Import resource group ──
+          if echo "$EXISTING" | grep -q "module.resource_group.azurerm_resource_group.main"; then
+            echo "Resource group already in state — skipping."
+          else
+            echo "Importing resource group..."
+            terraform import \
+              "module.resource_group.azurerm_resource_group.main" \
+              "/subscriptions/$SUB_ID/resourceGroups/$RG_NAME"
+          fi
+
+          # ── Import state storage account ──
+          if echo "$EXISTING" | grep -q "azurerm_storage_account.state"; then
+            echo "State storage account already in state — skipping."
+          else
+            echo "Importing state storage account..."
+            terraform import \
+              "azurerm_storage_account.state" \
+              "/subscriptions/$SUB_ID/resourceGroups/$RG_NAME/providers/Microsoft.Storage/storageAccounts/$SA_NAME"
+          fi
+
+          # ── Import tfstate blob container ──
+          if echo "$EXISTING" | grep -q "azurerm_storage_container.tfstate"; then
+            echo "Blob container already in state — skipping."
+          else
+            echo "Importing tfstate blob container..."
+            terraform import \
+              "azurerm_storage_container.tfstate" \
+              "https://${SA_NAME}.blob.core.windows.net/tfstate"
+          fi
+
+      # ── 6. Plan & Apply ──
+      - name: Terraform Plan
+        run: terraform plan -no-color -input=false -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false tfplan
+
+      - name: Terraform Output
+        id: output
+        run: terraform output -json
+
+      # ── 7. Remove runner IP from storage firewall ──
+      - name: Remove runner access from state storage
+        if: always()
+        run: |
+          az storage account network-rule remove \
+            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
+            --ip-address "$RUNNER_IP" 2>/dev/null || true

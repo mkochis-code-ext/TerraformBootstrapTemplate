@@ -64,6 +64,13 @@ jobs:
             --account-name "$SA_NAME" \
             --auth-mode login
 
+          echo "=== Assigning Storage Blob Data Contributor to service principal ==="
+          SA_ID=$(az storage account show --name "$SA_NAME" --resource-group "$RG_NAME" --query id -o tsv)
+          az role assignment create \
+            --assignee "${{ secrets.ARM_CLIENT_ID }}" \
+            --role "Storage Blob Data Contributor" \
+            --scope "$SA_ID" 2>/dev/null || true
+
       # ── 2. Allow the runner through the storage firewall ──
       - name: Allow runner access to state storage
         run: |

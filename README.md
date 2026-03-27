@@ -169,18 +169,44 @@ For tighter scoping, you can assign Owner only on the target resource group inst
 | `BOOTSTRAP_RESOURCE_GROUP_NAME`   | Name for the bootstrap resource group (e.g. `rg-bootstrap-myworkload`)   |
 | `BOOTSTRAP_LOCATION`              | Azure region (e.g. `eastus`)                                             |
 | `TF_STATE_STORAGE_ACCOUNT`        | Name for the state storage account (e.g. `stbootstrapstate`)             |
-| `ALZ_STORAGE_ACCOUNT_NAMES`       | JSON array of ALZ subscription storage account names (e.g. `["stmyorgmanagement","stmyorgidentity","stmyorgconnectivity","stmyorgcorp","stmyorgonline","stmyorgsandbox","stmyorgdecommissioned"]`) |
-| `PROJECT_STORAGE_ACCOUNT_NAMES`   | JSON array of project landing zone storage account names (e.g. `["stmyorgproject1"]`) |
-| `BOOTSTRAP_VNET_NAME`             | Name for the bootstrap virtual network (e.g. `vnet-bootstrap`)                        |
-| `PROJECT_VNET_NAME`               | Name for the project landing zone virtual network (e.g. `vnet-project`)               |
+| `BOOTSTRAP_VNET_NAME`             | Name for the bootstrap virtual network (e.g. `vnet-bootstrap`)           |
+| `PROJECT_VNET_NAME`               | Name for the project landing zone virtual network (e.g. `vnet-project`)  |
 
-### Step 2: Configure GitHub Environments
+### Step 2: Configure Storage Account Names
+
+Storage account names are managed in separate version-controlled files to reduce the blast radius of changes — a modification to project accounts does not touch the ALZ configuration, and vice versa.
+
+**ALZ storage accounts** — edit [terraform/bootstrap/alz_storage_accounts.auto.tfvars.json](terraform/bootstrap/alz_storage_accounts.auto.tfvars.json):
+
+```json
+{
+  "alz_storage_account_names": [
+    "stmyorgmanagement",
+    "stmyorgidentity",
+    "stmyorgconnectivity"
+  ]
+}
+```
+
+**Project storage accounts** — edit [terraform/bootstrap/project_storage_accounts.auto.tfvars.json](terraform/bootstrap/project_storage_accounts.auto.tfvars.json):
+
+```json
+{
+  "project_storage_account_names": [
+    "stmyorgproject1"
+  ]
+}
+```
+
+Both files are version-controlled, so changes are tracked in PRs and go through the normal CI/CD review process.
+
+### Step 3: Configure GitHub Environments
 
 Create the following environment in **Settings → Environments**:
 
 - **`bootstrap-apply`** — Add required reviewers to gate CD applies
 
-### Step 3: Run the Bootstrap Setup
+### Step 4: Run the Bootstrap Setup
 
 1. Go to **Actions → Bootstrap Setup → Run workflow**
 2. The workflow will:
@@ -190,7 +216,7 @@ Create the following environment in **Settings → Environments**:
    - Run `terraform apply` to create the remaining infrastructure (VNet, subnet, DNS zones, project storage accounts)
 3. Verify the run succeeds with no errors
 
-### Step 4: Downgrade Service Principal Permissions
+### Step 5: Downgrade Service Principal Permissions
 
 After the bootstrap setup succeeds, remove Owner and assign Contributor:
 
@@ -208,7 +234,7 @@ az role assignment create \
 
 The CI/CD pipelines only need `Contributor` for day-to-day operations.
 
-### Step 5: Normal Development Workflow
+### Step 6: Normal Development Workflow
 
 From this point forward, all changes go through the standard CI/CD pipelines:
 

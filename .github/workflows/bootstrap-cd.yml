@@ -42,7 +42,7 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: '{"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}''
+          creds: '{"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}'
 
       - name: Allow runner access to state storage
         run: |
@@ -109,8 +109,6 @@ jobs:
       TF_VAR_location: ${{ secrets.BOOTSTRAP_LOCATION }}
       TF_VAR_resource_group_name: ${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}
       TF_VAR_state_storage_account_name: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
-      TF_VAR_alz_storage_account_names: ${{ secrets.ALZ_STORAGE_ACCOUNT_NAMES }}
-      TF_VAR_project_storage_account_names: ${{ secrets.PROJECT_STORAGE_ACCOUNT_NAMES }}
       TF_VAR_vnet_name: ${{ secrets.BOOTSTRAP_VNET_NAME }}
       TF_VAR_project_vnet_name: ${{ secrets.PROJECT_VNET_NAME }}
 

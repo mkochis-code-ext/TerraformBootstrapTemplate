@@ -58,6 +58,9 @@ jobs:
             --min-tls-version TLS1_2 \
             --tags ManagedBy=Terraform
 
+          echo "Waiting for storage account provisioning to propagate..."
+          sleep 60
+
           echo "=== Ensuring blob container exists ==="
           az storage container create \
             --name "tfstate" \
@@ -69,7 +72,22 @@ jobs:
           az role assignment create \
             --assignee "${{ secrets.ARM_CLIENT_ID }}" \
             --role "Storage Blob Data Contributor" \
-            --scope "$SA_ID" 2>/dev/null || true
+            --scope "$SA_ID" \
+            --only-show-errors || echo "Role assignment may already exist."
+
+          echo "=== Verifying role assignment ==="
+          ROLE_CHECK=$(az role assignment list \
+            --assignee "${{ secrets.ARM_CLIENT_ID }}" \
+            --role "Storage Blob Data Contributor" \
+            --scope "$SA_ID" \
+            --query "[].roleDefinitionName" -o tsv)
+          if [ -z "$ROLE_CHECK" ]; then
+            echo "::error::Storage Blob Data Contributor role assignment not found on $SA_NAME for ${{ secrets.ARM_CLIENT_ID }}"
+            exit 1
+          fi
+          echo "Verified: $ROLE_CHECK is assigned."
+          echo "Waiting for RBAC propagation..."
+          sleep 60
 
       # ── 2. Allow the runner through the storage firewall ──
       - name: Allow runner access to state storage
@@ -82,7 +100,7 @@ jobs:
             --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
             --ip-address "$RUNNER_IP" 2>/dev/null || true
           echo "Waiting for firewall rule to propagate..."
-          sleep 360
+          sleep 60
 
       # ── 3. Install Terraform ──
       - name: Setup Terraform

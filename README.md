@@ -4,6 +4,8 @@ A template repository that bootstraps Terraform state management in Azure. It so
 
 All storage accounts are deployed inside a VNet with private endpoints and deny-by-default network rules. CI/CD runners temporarily allowlist their public IP during each workflow run.
 
+> **Note:** This is a theoretical reference implementation that assumes no existing network infrastructure. It provisions all networking resources (VNets, subnets, peering, private DNS zones) from scratch. In a real environment with established hub-and-spoke or Virtual WAN topologies, you would integrate with existing network resources rather than creating standalone VNets.
+
 ## Repository Structure
 
 ```
@@ -65,11 +67,47 @@ After the setup workflow completes, all resources — including the state storag
 
 ### Network Security Model
 
-All storage accounts are locked down:
+The infrastructure uses **two separate VNets** to isolate bootstrap state from project workloads, limiting the blast radius in the event of a breach:
+
+```
+┌──────────────────────────────────┐     VNet Peering      ┌──────────────────────────────────┐
+│  Bootstrap VNet (10.0.0.0/16)    │◄────────────────────►│  Project VNet (10.1.0.0/16)      │
+│                                  │                       │                                  │
+│  ┌────────────────────────────┐  │                       │  ┌────────────────────────────┐  │
+│  │ Bootstrap Subnet           │  │                       │  │ Project Subnet             │  │
+│  │ (10.0.1.0/24)              │  │                       │  │ (10.1.1.0/24)              │  │
+│  │                            │  │                       │  │                            │  │
+│  │ • State storage account    │  │                       │  │ • Project SA 1             │  │
+│  │   (terraform.tfstate)      │  │                       │  │ • Project SA 2             │  │
+│  │ • ALZ Management SA        │  │                       │  │ • ...                      │  │
+│  │ • ALZ Identity SA          │  │                       │  │ • Private endpoints (blob) │  │
+│  │ • ALZ Connectivity SA      │  │                       │  └────────────────────────────┘  │
+│  │ • ALZ Corp SA              │  │                       │                                  │
+│  │ • ALZ Online SA            │  │                       └──────────────────────────────────┘
+│  │ • ALZ Sandbox SA           │  │
+│  │ • ALZ Decommissioned SA    │  │
+│  │ • Private endpoints (blob) │  │
+│  └────────────────────────────┘  │
+│                                  │
+│  Private DNS Zone                │
+│  (privatelink.blob.core.         │
+│   windows.net)                   │
+│  ├─ linked to Bootstrap VNet     │
+│  └─ linked to Project VNet       │
+└──────────────────────────────────┘
+```
+
+**Network segmentation:**
+
+- **Bootstrap VNet** — contains the Terraform state storage account and ALZ subscription storage accounts (Management, Identity, Connectivity, etc.) with their private endpoints. This is the most sensitive segment — it holds all state files for core platform subscriptions.
+- **Project VNet** — contains project/workload landing zone storage accounts. A compromise here does not expose ALZ or bootstrap state.
+- **VNet peering** — bi-directional peering enables private DNS resolution across both networks. `allow_forwarded_traffic` and `allow_gateway_transit` are disabled to minimise cross-network exposure.
+
+**Storage account hardening:**
 
 - **Default action**: Deny all traffic
-- **VNet access**: Allowed via subnet service endpoints
-- **Private endpoints**: Each storage account gets a blob private endpoint linked to a private DNS zone
+- **VNet access**: Allowed via subnet service endpoints (each storage account only allows its own subnet)
+- **Private endpoints**: Each storage account gets a blob private endpoint linked to a shared private DNS zone
 - **CI/CD access**: Runners temporarily add their public IP to `ip_rules` at the start of each workflow, and remove it at the end (even on failure, via `if: always()`)
 - **Terraform compatibility**: `lifecycle { ignore_changes = [network_rules[0].ip_rules] }` prevents Terraform from reverting dynamically managed runner IPs
 - **Azure services**: Allowed via `bypass = ["AzureServices"]`
@@ -93,7 +131,8 @@ All storage accounts are locked down:
 | `BOOTSTRAP_RESOURCE_GROUP_NAME`   | Name for the bootstrap resource group (e.g. `rg-bootstrap-myworkload`)   |
 | `BOOTSTRAP_LOCATION`              | Azure region (e.g. `eastus`)                                             |
 | `TF_STATE_STORAGE_ACCOUNT`        | Name for the state storage account (e.g. `stbootstrapstate`)             |
-| `BOOTSTRAP_STORAGE_ACCOUNT_NAMES` | JSON array of project storage account names (e.g. `["stmyworkload1"]`)   |
+| `ALZ_STORAGE_ACCOUNT_NAMES`       | JSON array of ALZ subscription storage account names (e.g. `["stmyorgmanagement","stmyorgidentity","stmyorgconnectivity","stmyorgcorp","stmyorgonline","stmyorgsandbox","stmyorgdecommissioned"]`) |
+| `PROJECT_STORAGE_ACCOUNT_NAMES`   | JSON array of project landing zone storage account names (e.g. `["stmyorgproject1"]`) |
 
 ### Step 2: Configure GitHub Environments
 
@@ -122,17 +161,22 @@ From this point forward, all changes go through the standard CI/CD pipelines:
 
 ### Variables
 
-| Variable                     | Type           | Required | Default          | Description                                              |
-|------------------------------|----------------|----------|------------------|----------------------------------------------------------|
-| `state_storage_account_name` | `string`       | Yes      | —                | State storage account name (3–24 lowercase alphanumeric) |
-| `storage_account_names`      | `set(string)`  | Yes      | —                | Project storage account names (tracked via `for_each`)   |
-| `resource_group_name`        | `string`       | Yes      | —                | Resource group name                                      |
-| `location`                   | `string`       | Yes      | —                | Azure region                                             |
-| `vnet_name`                  | `string`       | Yes      | —                | Virtual network name                                     |
-| `vnet_address_space`         | `list(string)` | No       | `["10.0.0.0/16"]`  | VNet address space                                    |
-| `subnet_name`                | `string`       | No       | `"default"`      | Subnet name                                              |
-| `subnet_address_prefixes`    | `list(string)` | No       | `["10.0.1.0/24"]`  | Subnet address prefixes                               |
-| `tags`                       | `map(string)`  | No       | `{ManagedBy = "Terraform"}` | Tags applied to all resources              |
+| Variable                         | Type           | Required | Default                    | Description                                              |
+|----------------------------------|----------------|----------|----------------------------|----------------------------------------------------------|
+| `state_storage_account_name`     | `string`       | Yes      | —                          | State storage account name (3–24 lowercase alphanumeric) |
+| `alz_storage_account_names`      | `set(string)`  | Yes      | —                          | ALZ subscription storage account names (bootstrap VNet)  |
+| `project_storage_account_names`  | `set(string)`  | Yes      | —                          | Project storage account names (project VNet)             |
+| `resource_group_name`            | `string`       | Yes      | —                          | Resource group name                                      |
+| `location`                       | `string`       | Yes      | —                          | Azure region                                             |
+| `vnet_name`                      | `string`       | Yes      | —                          | Bootstrap virtual network name                           |
+| `vnet_address_space`             | `list(string)` | No       | `["10.0.0.0/16"]`           | Bootstrap VNet address space                             |
+| `subnet_name`                    | `string`       | No       | `"default"`                 | Bootstrap subnet name                                    |
+| `subnet_address_prefixes`        | `list(string)` | No       | `["10.0.1.0/24"]`           | Bootstrap subnet address prefixes                        |
+| `project_vnet_name`              | `string`       | Yes      | —                          | Project landing zone VNet name                           |
+| `project_vnet_address_space`     | `list(string)` | No       | `["10.1.0.0/16"]`           | Project VNet address space (must not overlap bootstrap)  |
+| `project_subnet_name`            | `string`       | No       | `"project"`                 | Project subnet name                                      |
+| `project_subnet_address_prefixes`| `list(string)` | No       | `["10.1.1.0/24"]`           | Project subnet address prefixes                          |
+| `tags`                           | `map(string)`  | No       | `{ManagedBy = "Terraform"}` | Tags applied to all resources                            |
 
 ### Outputs
 
@@ -140,27 +184,36 @@ From this point forward, all changes go through the standard CI/CD pipelines:
 |-------------------------------|-----------------------------------------------------------|
 | `state_storage_account_name`  | Name of the Terraform state storage account               |
 | `state_tfstate_container_name`| Name of the state blob container                          |
-| `storage_account_names`       | Map of project storage account names                      |
+| `alz_storage_account_names`   | Map of ALZ storage account names                          |
+| `alz_tfstate_container_names` | Map of ALZ tfstate container names per storage account    |
+| `project_storage_account_names`     | Map of project storage account names                |
+| `project_tfstate_container_names`   | Map of project tfstate container names per storage account |
 | `resource_group_name`         | Name of the resource group                                |
-| `tfstate_container_names`     | Map of tfstate container names per project storage account |
-| `vnet_id`                     | ID of the virtual network                                 |
-| `vnet_name`                   | Name of the virtual network                               |
-| `subnet_id`                   | ID of the subnet                                          |
+| `vnet_id`                     | ID of the bootstrap virtual network                       |
+| `vnet_name`                   | Name of the bootstrap virtual network                     |
+| `subnet_id`                   | ID of the bootstrap subnet                                |
+| `project_vnet_id`             | ID of the project landing zone VNet                       |
+| `project_vnet_name`           | Name of the project landing zone VNet                     |
+| `project_subnet_id`           | ID of the project landing zone subnet                     |
 | `private_dns_zone_blob_id`    | ID of the blob private DNS zone                           |
 
 ### Resources Created
 
-| Resource | Description |
-|----------|-------------|
-| Resource Group | Contains all bootstrap resources |
-| State Storage Account | Holds Terraform remote state; VNet-restricted with private endpoint |
-| State Blob Container (`tfstate`) | Container for `.tfstate` files |
-| Virtual Network | Network boundary for private endpoints |
-| Subnet | Subnet with `Microsoft.Storage` service endpoint |
-| Private DNS Zone (`privatelink.blob.core.windows.net`) | DNS resolution for private endpoints |
-| Private DNS Zone VNet Link | Links the DNS zone to the VNet |
-| State Storage Private Endpoint | Private endpoint for the state storage account |
-| Project Storage Accounts (N) | One per entry in `storage_account_names`, each with private endpoint and tfstate container |
+| Resource | Network | Description |
+|----------|---------|-------------|
+| Resource Group | — | Contains all bootstrap and project resources |
+| **Bootstrap VNet** | `10.0.0.0/16` | Network boundary for state infrastructure |
+| Bootstrap Subnet | `10.0.1.0/24` | Subnet with `Microsoft.Storage` service endpoint for state storage |
+| State Storage Account | Bootstrap | Holds Terraform remote state; deny-by-default with private endpoint |
+| State Blob Container (`tfstate`) | Bootstrap | Container for `.tfstate` files |
+| State Storage Private Endpoint | Bootstrap | Private blob endpoint for the state storage account |
+| ALZ Storage Accounts (N) | Bootstrap | One per ALZ subscription (Management, Identity, etc.), each with private endpoint and tfstate container |
+| **Project VNet** | `10.1.0.0/16` | Isolated network for project landing zone storage accounts |
+| Project Subnet | `10.1.1.0/24` | Subnet with `Microsoft.Storage` service endpoint for project storage |
+| VNet Peering (bootstrap ↔ project) | Both | Bi-directional peering for private DNS resolution |
+| Private DNS Zone (`privatelink.blob.core.windows.net`) | Both | Shared DNS zone linked to both VNets |
+| Private DNS Zone VNet Links (x2) | Both | Links DNS zone to bootstrap and project VNets |
+| Project Storage Accounts (N) | Project | One per project entry, each with private endpoint and tfstate container |
 
 ## CI/CD Pipelines
 

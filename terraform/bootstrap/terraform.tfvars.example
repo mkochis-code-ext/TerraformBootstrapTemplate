@@ -8,15 +8,32 @@ location = "eastus"
 # Created by bootstrap-setup.yml and imported into state on first run.
 state_storage_account_name = "stbootstrapstate"
 
-# Storage account names (must each be globally unique, 3–24 lowercase alphanumeric characters).
-# Add or remove names independently — for_each ensures only the changed account is affected.
-storage_account_names = [
-  "stbootstrapmyworkload1",
-  "stbootstrapmyworkload2",
+# ALZ storage account names — deployed in the bootstrap VNet.
+# Each holds Terraform state for the corresponding ALZ subscription.
+# Replace the prefix "stmyorg" with a prefix unique to your organisation.
+alz_storage_account_names = [
+  "stmyorgmanagement",     # ALZ Management subscription
+  "stmyorgidentity",       # ALZ Identity subscription
+  "stmyorgconnectivity",   # ALZ Connectivity subscription
+  "stmyorgcorp",           # ALZ Corp landing zone subscription
+  "stmyorgonline",         # ALZ Online landing zone subscription
+  "stmyorgsandbox",        # ALZ Sandbox subscription
+  "stmyorgdecommissioned", # ALZ Decommissioned subscription
 ]
 
-# Virtual network
+# Project storage account names — deployed in the project VNet.
+# Used for project/workload Terraform state, isolated from ALZ state.
+# Add or remove names independently — for_each ensures only the changed account is affected.
+project_storage_account_names = [
+  "stmyorgproject1",
+]
+
+# Virtual network — bootstrap (state storage)
 vnet_name = "vnet-bootstrap-myworkload"
+
+# Virtual network — project landing zones (ALZ storage accounts)
+# Uses a separate address space to isolate project workloads from bootstrap state.
+project_vnet_name = "vnet-project-myworkload"
 
 # Tags
 tags = {

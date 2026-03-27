@@ -3,8 +3,13 @@ variable "state_storage_account_name" {
   type        = string
 }
 
-variable "storage_account_names" {
-  description = "Set of storage account names to create. Each name must be globally unique and 3–24 lowercase alphanumeric characters. Using a set with for_each ensures each account is tracked independently."
+variable "alz_storage_account_names" {
+  description = "Set of ALZ subscription storage account names. Deployed in the bootstrap VNet alongside the state storage account. Each name must be globally unique, 3–24 lowercase alphanumeric characters."
+  type        = set(string)
+}
+
+variable "project_storage_account_names" {
+  description = "Set of project landing zone storage account names. Deployed in the project VNet, isolated from the bootstrap network segment. Each name must be globally unique, 3–24 lowercase alphanumeric characters."
   type        = set(string)
 }
 
@@ -39,6 +44,29 @@ variable "subnet_address_prefixes" {
   description = "Address prefixes for the subnet"
   type        = list(string)
   default     = ["10.0.1.0/24"]
+}
+
+variable "project_vnet_name" {
+  description = "Name of the project landing zone virtual network"
+  type        = string
+}
+
+variable "project_vnet_address_space" {
+  description = "Address space for the project landing zone VNet. Must not overlap with the bootstrap VNet."
+  type        = list(string)
+  default     = ["10.1.0.0/16"]
+}
+
+variable "project_subnet_name" {
+  description = "Name of the project landing zone subnet"
+  type        = string
+  default     = "project"
+}
+
+variable "project_subnet_address_prefixes" {
+  description = "Address prefixes for the project landing zone subnet"
+  type        = list(string)
+  default     = ["10.1.1.0/24"]
 }
 
 variable "tags" {

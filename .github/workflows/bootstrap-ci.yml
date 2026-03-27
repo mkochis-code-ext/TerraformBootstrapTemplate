@@ -33,6 +33,8 @@ jobs:
       TF_VAR_alz_storage_account_names: ${{ secrets.ALZ_STORAGE_ACCOUNT_NAMES }}
       TF_VAR_project_storage_account_names: ${{ secrets.PROJECT_STORAGE_ACCOUNT_NAMES }}
       TF_VAR_state_storage_account_name: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
+      TF_VAR_vnet_name: ${{ secrets.BOOTSTRAP_VNET_NAME }}
+      TF_VAR_project_vnet_name: ${{ secrets.PROJECT_VNET_NAME }}
 
     steps:
       - name: Checkout Code

@@ -171,6 +171,8 @@ For tighter scoping, you can assign Owner only on the target resource group inst
 | `TF_STATE_STORAGE_ACCOUNT`        | Name for the state storage account (e.g. `stbootstrapstate`)             |
 | `ALZ_STORAGE_ACCOUNT_NAMES`       | JSON array of ALZ subscription storage account names (e.g. `["stmyorgmanagement","stmyorgidentity","stmyorgconnectivity","stmyorgcorp","stmyorgonline","stmyorgsandbox","stmyorgdecommissioned"]`) |
 | `PROJECT_STORAGE_ACCOUNT_NAMES`   | JSON array of project landing zone storage account names (e.g. `["stmyorgproject1"]`) |
+| `BOOTSTRAP_VNET_NAME`             | Name for the bootstrap virtual network (e.g. `vnet-bootstrap`)                        |
+| `PROJECT_VNET_NAME`               | Name for the project landing zone virtual network (e.g. `vnet-project`)               |
 
 ### Step 2: Configure GitHub Environments
 

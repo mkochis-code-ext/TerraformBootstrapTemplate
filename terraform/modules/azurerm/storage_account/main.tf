@@ -14,10 +14,20 @@ resource "azurerm_storage_account" "main" {
   }
 }
 
+data "azurerm_client_config" "current" {}
+
+resource "azurerm_role_assignment" "blob_data_contributor" {
+  scope                = azurerm_storage_account.main.id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
 resource "azurerm_storage_container" "tfstate" {
   name                  = "tfstate"
   storage_account_name  = azurerm_storage_account.main.name
   container_access_type = "private"
+
+  depends_on = [azurerm_role_assignment.blob_data_contributor]
 }
 
 resource "azurerm_private_endpoint" "blob" {

@@ -66,6 +66,7 @@ jobs:
             --name "tfstate" \
             --account-name "$SA_NAME" \
             --auth-mode login
+          sleep 240
 
           echo "=== Assigning Storage Blob Data Contributor to service principal ==="
           SA_ID=$(az storage account show --name "$SA_NAME" --resource-group "$RG_NAME" --query id -o tsv)
@@ -144,14 +145,14 @@ jobs:
           SUB_ID="${{ secrets.ARM_SUBSCRIPTION_ID }}"
           RG_NAME="${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}"
           SA_NAME="${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
-          EXISTING=$(terraform state list 2>/dev/null || true)
+          EXISTING=$(terraform state list -lock=false 2>/dev/null || true)
 
           # ── Import resource group ──
           if echo "$EXISTING" | grep -q "module.resource_group.azurerm_resource_group.main"; then
             echo "Resource group already in state — skipping."
           else
             echo "Importing resource group..."
-            terraform import \
+            terraform import -lock-timeout=120s \
               "module.resource_group.azurerm_resource_group.main" \
               "/subscriptions/$SUB_ID/resourceGroups/$RG_NAME"
           fi
@@ -161,7 +162,7 @@ jobs:
             echo "State storage account already in state — skipping."
           else
             echo "Importing state storage account..."
-            terraform import \
+            terraform import -lock-timeout=120s \
               "azurerm_storage_account.state" \
               "/subscriptions/$SUB_ID/resourceGroups/$RG_NAME/providers/Microsoft.Storage/storageAccounts/$SA_NAME"
           fi
@@ -171,7 +172,7 @@ jobs:
             echo "Blob container already in state — skipping."
           else
             echo "Importing tfstate blob container..."
-            terraform import \
+            terraform import -lock-timeout=120s \
               "azurerm_storage_container.tfstate" \
               "https://${SA_NAME}.blob.core.windows.net/tfstate"
           fi

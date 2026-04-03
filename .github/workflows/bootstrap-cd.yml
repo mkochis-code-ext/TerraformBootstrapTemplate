@@ -1,5 +1,9 @@
 name: Bootstrap CD
 
+# Triggers on merge to main (after PR) or manual dispatch.
+# Deploys sequentially: POC → Test → Prod.
+# Each environment: Plan runs automatically, Apply requires approval.
+
 on:
   push:
     branches:
@@ -7,171 +11,52 @@ on:
     paths:
       - 'terraform/bootstrap/**'
       - '.github/workflows/bootstrap-cd.yml'
+      - '.github/workflows/bootstrap-deploy.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  TF_VERSION: '1.6.0'
-  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
-  ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
-  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+# ─────────────────────────────────────────────────────────────────────────────
+# GitHub Environments required:
+#
+#   Secrets environments (no protection rules):
+#     poc   – POC ARM credentials + bootstrap config secrets
+#     test  – Test ARM credentials + bootstrap config secrets
+#     prod  – Prod ARM credentials + bootstrap config secrets
+#
+#   Approval-gate environments (required-reviewer protection, no secrets):
+#     poc-approve
+#     test-approve
+#     prod-approve
+#
+#   Each secrets environment needs these secrets:
+#     ARM_CLIENT_ID, ARM_CLIENT_SECRET, ARM_SUBSCRIPTION_ID, ARM_TENANT_ID,
+#     BOOTSTRAP_LOCATION, BOOTSTRAP_RESOURCE_GROUP_NAME, TF_STATE_STORAGE_ACCOUNT,
+#     ALZ_STORAGE_ACCOUNT_NAMES, PROJECT_STORAGE_ACCOUNT_NAMES,
+#     BOOTSTRAP_VNET_NAME, PROJECT_VNET_NAME
+# ─────────────────────────────────────────────────────────────────────────────
 
 jobs:
-  terraform-plan:
-    name: 'CD - Terraform Plan'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./terraform/bootstrap
-    env:
-      TF_VAR_location: ${{ secrets.BOOTSTRAP_LOCATION }}
-      TF_VAR_resource_group_name: ${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}
-      TF_VAR_state_storage_account_name: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
-      TF_VAR_alz_storage_account_names: ${{ secrets.ALZ_STORAGE_ACCOUNT_NAMES }}
-      TF_VAR_project_storage_account_names: ${{ secrets.PROJECT_STORAGE_ACCOUNT_NAMES }}
-      TF_VAR_vnet_name: ${{ secrets.BOOTSTRAP_VNET_NAME }}
-      TF_VAR_project_vnet_name: ${{ secrets.PROJECT_VNET_NAME }}
+  poc:
+    name: POC
+    uses: ./.github/workflows/bootstrap-deploy.yml
+    with:
+      environment: poc
+    secrets: inherit
 
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+  test:
+    name: Test
+    needs: poc
+    uses: ./.github/workflows/bootstrap-deploy.yml
+    with:
+      environment: test
+    secrets: inherit
 
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: '{"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}'
-
-      - name: Allow runner access to state storage
-        run: |
-          RUNNER_IP=$(curl -s https://api.ipify.org)
-          echo "RUNNER_IP=$RUNNER_IP" >> $GITHUB_ENV
-          echo "Adding runner IP $RUNNER_IP to storage firewall..."
-          az storage account network-rule add \
-            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
-            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
-            --ip-address "$RUNNER_IP" 2>/dev/null || true
-          echo "Waiting for firewall rule to propagate..."
-          sleep 30
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Setup Backend Config
-        run: |
-          cat > backend.tf <<EOF
-          terraform {
-            backend "azurerm" {
-              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
-              container_name       = "tfstate"
-              key                  = "bootstrap.terraform.tfstate"
-              resource_group_name  = "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}"
-              use_azuread_auth     = true
-            }
-          }
-          EOF
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Plan
-        run: terraform plan -no-color -input=false -out=tfplan
-
-      - name: Upload Plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: bootstrap-tfplan
-          path: terraform/bootstrap/tfplan
-          retention-days: 1
-
-      - name: Remove runner access from state storage
-        if: always()
-        run: |
-          az storage account network-rule remove \
-            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
-            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
-            --ip-address "$RUNNER_IP" 2>/dev/null || true
-
-  terraform-apply:
-    name: 'CD - Terraform Apply'
-    runs-on: ubuntu-latest
-    needs: terraform-plan
-    environment:
-      name: bootstrap-apply
-    defaults:
-      run:
-        working-directory: ./terraform/bootstrap
-    env:
-      TF_VAR_location: ${{ secrets.BOOTSTRAP_LOCATION }}
-      TF_VAR_resource_group_name: ${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}
-      TF_VAR_state_storage_account_name: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
-      TF_VAR_vnet_name: ${{ secrets.BOOTSTRAP_VNET_NAME }}
-      TF_VAR_project_vnet_name: ${{ secrets.PROJECT_VNET_NAME }}
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Azure Login
-        uses: azure/login@v2
-        with:
-          creds: '{"clientId":"${{ secrets.ARM_CLIENT_ID }}","clientSecret":"${{ secrets.ARM_CLIENT_SECRET }}","subscriptionId":"${{ secrets.ARM_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.ARM_TENANT_ID }}"}'
-
-      - name: Allow runner access to state storage
-        run: |
-          RUNNER_IP=$(curl -s https://api.ipify.org)
-          echo "RUNNER_IP=$RUNNER_IP" >> $GITHUB_ENV
-          echo "Adding runner IP $RUNNER_IP to storage firewall..."
-          az storage account network-rule add \
-            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
-            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
-            --ip-address "$RUNNER_IP" 2>/dev/null || true
-          echo "Waiting for firewall rule to propagate..."
-          sleep 30
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
-
-      - name: Setup Backend Config
-        run: |
-          cat > backend.tf <<EOF
-          terraform {
-            backend "azurerm" {
-              storage_account_name = "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}"
-              container_name       = "tfstate"
-              key                  = "bootstrap.terraform.tfstate"
-              resource_group_name  = "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}"
-              use_azuread_auth     = true
-            }
-          }
-          EOF
-
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Download Plan
-        uses: actions/download-artifact@v4
-        with:
-          name: bootstrap-tfplan
-          path: terraform/bootstrap
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false tfplan
-
-      - name: Terraform Output
-        id: output
-        run: terraform output -json
-
-      - name: Remove runner access from state storage
-        if: always()
-        run: |
-          az storage account network-rule remove \
-            --account-name "${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
-            --resource-group "${{ secrets.BOOTSTRAP_RESOURCE_GROUP_NAME }}" \
-            --ip-address "$RUNNER_IP" 2>/dev/null || true
+  prod:
+    name: Prod
+    needs: test
+    uses: ./.github/workflows/bootstrap-deploy.yml
+    with:
+      environment: prod
+    secrets: inherit

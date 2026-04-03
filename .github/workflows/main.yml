@@ -1,0 +1,50 @@
+
+name: terraform-multi-env
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [ poc, test, prod ]
+    steps:
+      - uses: actions/checkout@v4
+      # init/plan using env-specific vars/secrets
+      # write plan file named tfplan-${{ matrix.env }}
+      # upload artifact per env
+
+  apply_poc:
+    if: github.ref == 'refs/heads/main'
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write to console
+        run: echo "Hello World"
+
+
+  apply_test:
+    if: github.ref == 'refs/heads/main'
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write to console
+        run: echo "Hello World"
+
+  apply_prod:
+    if: github.ref == 'refs/heads/main'
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: production   # <-- ONLY place you gate
+    steps:
+      - name: Write to console
+        run: echo "Hello World"
